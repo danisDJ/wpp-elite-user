@@ -14,6 +14,8 @@ const app = express();
 const server = http.createServer(app);
 const io = socketIO(server);
 
+var PrimeiraConexao = false;
+
 app.use(express.json());
 app.use(express.urlencoded({
   extended: true
@@ -61,7 +63,7 @@ const createSessionsFileIfNotExists = function() {
 
 createSessionsFileIfNotExists();
 
-const setSessionsFile = function(sessions) {
+const setSessionsFile = function (sessions) {
   fs.writeFile(SESSIONS_FILE, JSON.stringify(sessions), function(err) {
     if (err) {
       console.log(err);
@@ -69,7 +71,7 @@ const setSessionsFile = function(sessions) {
   });
 }
 
-const getSessionsFile = function() {
+const getSessionsFile = function () {
   return JSON.parse(fs.readFileSync(SESSIONS_FILE));
 }
 
@@ -95,6 +97,7 @@ const createSession = function(id, description) {
     })
   });
 
+
   client.initialize();
 
   client.on('qr', (qr) => {
@@ -105,7 +108,8 @@ const createSession = function(id, description) {
     });
   });
 
-  client.on('ready', () => {
+    client.on('ready', () => {
+        console.log(id,"Esta no Ready");
     io.emit('ready', { id: id });
     io.emit('message', { id: id, text: 'Whatsapp está pronto!' });
 
@@ -115,12 +119,20 @@ const createSession = function(id, description) {
     setSessionsFile(savedSessions);
   });
 
-  client.on('authenticated', () => {
+    client.on('authenticated', () => {
+        console.log(id,"Esta no Autenticando");
     io.emit('authenticated', { id: id });
     io.emit('message', { id: id, text: 'Whatsapp autenticado!' });
-  });
+    });
 
-  client.on('auth_failure', function() {
+    client.on('change_state', () => {
+        console.log(id, "ChangeState");
+       // io.emit('authenticated', { id: id });
+        //io.emit('message', { id: id, text: 'Whatsapp autenticado!' });
+    });
+
+    client.on('auth_failure', function () {
+        console.log(id,"Esta na falha");
     io.emit('message', { id: id, text: 'Falha de autenticação, reiniciando...' });
   });
 
@@ -131,7 +143,7 @@ const createSession = function(id, description) {
 
     // Excluir o arquivo de sessões
     const savedSessions = getSessionsFile();
-    const sessionIndex = savedSessions.findIndex(sess => sess.id == id);
+      const sessionIndex = savedSessions.findIndex(sess => sess.id == id);
     savedSessions.splice(sessionIndex, 1);
     setSessionsFile(savedSessions);
 
@@ -144,26 +156,59 @@ const createSession = function(id, description) {
     description: description,
     client: client
   });
-
   // Adicionar sessão ao arquivo
   const savedSessions = getSessionsFile();
   const sessionIndex = savedSessions.findIndex(sess => sess.id == id);
 
-  if (sessionIndex == -1) {
+    if (sessionIndex == -1) {
     savedSessions.push({
       id: id,
       description: description,
       ready: false,
     });
+        setSessionsFile(savedSessions);
+    }
+
+}
+
+const removeSession = function (id) {
+    console.log('Remover sessão: ' + id);
+    const client = new Client({
+        restartOnAuthFail: true,
+        puppeteer: {
+            headless: true,
+            args: [
+                '--no-sandbox',
+                '--disable-setuid-sandbox',
+                '--disable-dev-shm-usage',
+                '--disable-accelerated-2d-canvas',
+                '--no-first-run',
+                '--no-zygote',
+                '--single-process', // <- este não funciona no Windows
+                '--disable-gpu'
+            ],
+        },
+        authStrategy: new LocalAuth({
+            clientId: id
+        })
+    });
+
+    io.emit('clientRemoved', { id: id, text: 'Whatsapp desconectado!' });
+    client.destroy();
+    client.initialize();
+
+    // Excluir o arquivo de sessões
+    const savedSessions = getSessionsFile();
+    const sessionIndex = savedSessions.findIndex(sess => sess.id == id);
+    savedSessions.splice(sessionIndex, 1);
     setSessionsFile(savedSessions);
-  }
 }
 
 const init = function(socket) {
-  const savedSessions = getSessionsFile();
+    const savedSessions = getSessionsFile();
 
-  if (savedSessions.length > 0) {
-    if (socket) {
+    if (savedSessions.length > 0) {
+        if (socket) {
       /**
        * Na primeira execução (por exemplo, reiniciando o servidor), nosso cliente ainda não está pronto!
        * Vai precisar de vários tempos para autenticar.
@@ -171,38 +216,71 @@ const init = function(socket) {
        * Então, para não confundir as pessoas com o status 'pronto'
        * Precisamos torná-lo como FALSE para esta condição
        */
-      savedSessions.forEach((e, i, arr) => {
-        arr[i].ready = false;
-      });
+     /*savedSessions.forEach((e, i, arr) => {
+         arr[i].ready = false;
+      });*/
+          //  setSessionsFile(savedSessions);
 
-      socket.emit('init', savedSessions);
-    } else {
-      savedSessions.forEach(sess => {
+        socket.emit('init', savedSessions);
+        } else {
+            PrimeiraConexao = true;
+           /* const savedSessions = getSessionsFile();
+            const sessionIndex = savedSessions.findIndex(sess => sess.id == id);
+            savedSessions[sessionIndex].ready = true;
+            setSessionsFile(savedSessions);*/
+            var sessionIndex = null;
+            savedSessions.forEach((e, i, arr) => {
+                sessionIndex = savedSessions.findIndex(sess => sess.id == arr[i].id);
+                savedSessions[sessionIndex].ready = false;
+            });
+            //setSessionsFile(savedSessions);
+           
+       savedSessions.forEach(sess => {
         createSession(sess.id, sess.description);
-      });
+       });
+
+       alterarStatus();
     }
   }
 }
 
 init();
 
+function alterarStatus() {
+    if (PrimeiraConexao == true) {
+        var savedSessions = getSessionsFile();
+        var sessionIndex = null;
+        savedSessions.forEach((e, i, arr) => {
+            sessionIndex = savedSessions.findIndex(sess => sess.id == arr[i].id);
+            savedSessions[sessionIndex].ready = false;
+        });
+        setSessionsFile(savedSessions);
+        PrimeiraConexao = false;
+    }
+}
+
 // Socket IO
-io.on('connection', function(socket) {
-  init(socket);
+io.on('connection', function (socket) {
+    init(socket);
 
   socket.on('create-session', function(data) {
     console.log('Create session: ' + data.id);
     createSession(data.id, data.description);
   });
+  socket.on('remove-session', function (data) {
+      console.log('Remove session socket: ' + data.id);
+      removeSession(data.id);
+  });
 });
 
 // Enviar mensagem
-app.post('/send-message',[
-	body('number').notEmpty(),
+app.post('/send-message', [
+    body('sender').notEmpty(),
+    body('number').notEmpty(),
 	body('message').notEmpty(),
 ], async (req, res) => {
   
-  const errors = validationResult(req).formatWith(({ msg }) => {
+  /**const errors = validationResult(req).formatWith(({ msg }) => {
 	return msg;
   });
   
@@ -211,18 +289,34 @@ app.post('/send-message',[
 			status: false,
 			message: errors.mapped()
 		})
-  }
+  }*/
   const sender = req.body.sender;
   const number = phoneNumberFormatter(req.body.number);
   const message = req.body.message;
-
+    
   const client = sessions.find(sess => sess.id == sender)?.client;
+  const savedSessions = getSessionsFile();
+  var pronto = false;
+   savedSessions.forEach((e, i, arr) => {
+       if (arr[i].id == sender) {
+            pronto = arr[i].ready;
+       } 
+    });
+  
 
+    console.log(pronto);
   // Verifique se o remetente existe e está pronto
   if (!client) {
     return res.status(422).json({
       status: false,
       message: `O remetente: ${sender} não foi encontrado!`
+    })
+    }
+
+  if (!pronto) {
+    return res.status(422).json({
+        status: false,
+        message: `O remetente: ${sender} não está pronto!`
     })
   }
 

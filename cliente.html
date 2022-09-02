@@ -107,7 +107,8 @@
 			if (key == "idCli") idc = value;
 		});
 		console.log(idc);
-		document.getElementById("idClient").innerHTML = idc;
+       // document.getElementById("idClient") = idc;
+		//document.getElementById("idClient").innerHTML = idc;
 	</script>
 	<script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.5.1/jquery.min.js"></script>
 	<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/2.3.0/socket.io.js"></script>
@@ -166,6 +167,10 @@
 						$(`.client.${clientClass} .logs`).prepend($('<li>').text('Whatsapp está pronto!'));
 					} else {
 						$(`.client.${clientClass} .logs`).prepend($('<li>').text('Conectando...'));
+                        socket.emit('create-session', {
+                            id: clientId,
+                            description: clientDescription
+                        });
 					}
 				} else{
 					console.log('Não encontrado')
